@@ -1,0 +1,234 @@
+---
+title: false
+author: "Doug Varney"
+date: "Noverber 20, 2014"
+output: 
+html_document:
+theme: spacelab
+---
+
+####$$Machine Learning Project - Exercise Band$$
+
+#### Introduction
+This report presents an analysis of a *FitBit-like* device used to monitor a specific exercise routine. Data is stored from the on-device accelerometer, when placed at three positions on the participants' body: belt, forearm and arm. An extra placement is recorded on the equipment-type used. 
+
+The motivation for the project is to predict how the exercises are performed. Questions answered concern:
+1. how the software model was built
+2. the use of cross-validation
+3. expected out-of-sample error
+4. why these choices
+
+#### Data
+The data for this assignment is from [this location](http://groupware.les.inf.puc-rio.br/har), and contains information from the placement accelerometers. The data is split into a training and testing groups.
+
+#### Method
+
+Set the libraries and read the training test file. Split input training data into training and testing at 90%
+
+```{r, set libraries}
+library(lattice)
+library(ggplot2) 
+library(caret)
+library(gbm)
+```
+
+```{r, read files and split}
+set.seed(9175)
+fileLocation = "K:/COURSES/JHU_DataScience/PracticalMachineLearning/project/data/pml-training.csv"
+pml.training <- read.csv(fileLocation)
+```
+
+Load data to memory
+```{r}
+training <- read.csv(fileLocation, na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(fileLocation, na.strings=c("NA","#DIV/0!",""))
+```
+
+Split the training data at the 90% point
+```{r}
+inTrain <- createDataPartition(y=pml.training$classe, p=0.9, list=FALSE)
+newTraining <- pml.training[inTrain,]
+newTesting <- pml.training[-inTrain,]
+```
+
+#### Cleaning the data
+
+Clean the data of NAs
+The following process was used to clean the data:
+
+Mod 1: Cleaning NearZeroVariance Variables
+
+(from Help -
+*nearZeroVar* diagnoses predictors that have one unique value (i.e. are zero variance predictors) or predictors that are have both of the following characteristics: they have very few unique values relative to the number of samples and the ratio of the frequency of the most common value to the frequency of the second most common value is large. checkConditionalX looks at the distribution of the columns of x conditioned on the levels of y and identifies columns of x that are sparse within groups of y.)
+
+Inspect possible Non-Zero Variables:
+
+```{r}
+
+myDataNZV <- nearZeroVar(newTraining, saveMetrics=TRUE)
+```
+
+Run this code to create another training subset without NZV
+
+```{r}
+myNZVvars <- names(newTraining) %in% c("new_window", "kurtosis_roll_belt", "kurtosis_picth_belt",
+"kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", "skewness_yaw_belt",
+"max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "avg_roll_arm", "stddev_roll_arm",
+"var_roll_arm", "avg_pitch_arm", "stddev_pitch_arm", "var_pitch_arm", "avg_yaw_arm",
+"stddev_yaw_arm", "var_yaw_arm", "kurtosis_roll_arm", "kurtosis_picth_arm",
+"kurtosis_yaw_arm", "skewness_roll_arm", "skewness_pitch_arm", "skewness_yaw_arm",
+"max_roll_arm", "min_roll_arm", "min_pitch_arm", "amplitude_roll_arm", "amplitude_pitch_arm",
+"kurtosis_roll_dumbbell", "kurtosis_picth_dumbbell", "kurtosis_yaw_dumbbell", "skewness_roll_dumbbell",
+"skewness_pitch_dumbbell", "skewness_yaw_dumbbell", "max_yaw_dumbbell", "min_yaw_dumbbell",
+"amplitude_yaw_dumbbell", "kurtosis_roll_forearm", "kurtosis_picth_forearm", "kurtosis_yaw_forearm",
+"skewness_roll_forearm", "skewness_pitch_forearm", "skewness_yaw_forearm", "max_roll_forearm",
+"max_yaw_forearm", "min_roll_forearm", "min_yaw_forearm", "amplitude_roll_forearm",
+"amplitude_yaw_forearm", "avg_roll_forearm", "stddev_roll_forearm", "var_roll_forearm",
+"avg_pitch_forearm", "stddev_pitch_forearm", "var_pitch_forearm", "avg_yaw_forearm",
+"stddev_yaw_forearm", "var_yaw_forearm")
+newTraining <- newTraining[!myNZVvars]
+#To check the new N?? of observations
+dim(newTraining)
+```
+
+Mod 2: remove first column of training (ID)
+Removing the variable (ID) so that it doesn't interfer with ML
+
+```{r}
+newTraining <- newTraining[c(-1)]
+```
+
+Mod 3: Cleaning variables of too many NAs.
+For Variables that have >60% threshold of NA's
+
+
+```{r}
+
+trainingMx <- newTraining                       #make another subset to iterate over
+for(i in 1:length(newTraining)) 
+{                                               #do next column in the training dataset
+    if(sum( is.na( newTraining[, i] )) /nrow(newTraining) >= .6 ) 
+    {                                           #if number NAs >60% of total obs
+    	for(j in 1:length(trainingMx)) 
+        {
+			if(length( grep(names(newTraining[i]), names(trainingMx)[j])) ==1)  
+            {                                   #if same columns
+				trainingMx <- trainingMx[ , -j] #remove column
+		    }	
+	    } 
+	}
+}
+#check the new observations
+dim(trainingMx)
+
+#point back to our original training
+newTraining <- trainingMx
+rm(trainingMx)
+```
+
+adjust newTesting and testing data as above
+
+```{r}
+cleanUp1 <- colnames(newTraining)
+cleanUp2 <- colnames(newTraining[, -58]) #already with classe column removed
+newTesting <- newTesting[cleanUp1]
+testing <- testing[cleanUp2]
+
+#To check the new observations
+dim(newTesting)
+
+#To check the new observations
+dim(testing)
+
+#The last column (problem_id) which is not equal to training sets, was removed
+```
+
+To ensure proper functioning of Decision Trees and RandomForest Algorithm with the test data (original data provided), we need to force to the same type.
+
+```{r}
+for (i in 1:length(newTesting)) 
+{
+    for(j in 1:length(newTraining)) 
+    {
+		if(length(grep(names(newTraining[i]), names(newTesting)[j]))==1)  
+        {
+			class(newTesting[j]) <- class(newTraining[i])
+		}      
+	}      
+}
+#make sure coertion really worked
+testing <- rbind(newTraining[2, -58], testing) #row 1,2 are useless and were be removed
+testing <- testing[-1,]
+```
+
+```{r, print and save summary}
+names(newTraining)
+smt <- summary(newTraining)
+write.table(smt, file="K:/COURSES/JHU_DataScience/PracticalMachineLearning/project/data/summary.txt", sep=',')
+```
+
+Reasons for process:
+1. 90 percent subsample is used to train the module
+2. 10 percent sample is used for cross-validation.  
+3. used this simple cross-validation rather than using K-fold with the `cv.folds` option
+   to decrease run time, which was already rather long  
+4. implement a Stochastic Gradient Boosting algorithm via the `gbm` package.
+
+```{r, fit training and time it}
+ptm <- proc.time()
+modFitA1 <- train(classe ~ user_name + pitch_arm + yaw_arm + roll_arm + roll_belt + pitch_belt + yaw_belt + gyros_belt_x + gyros_belt_y + gyros_belt_z + accel_belt_x + accel_belt_y + accel_belt_z + magnet_belt_x + magnet_belt_y + magnet_belt_z + gyros_arm_x + gyros_arm_y + gyros_arm_z + accel_arm_x + accel_arm_y + accel_arm_z + magnet_arm_x + magnet_arm_y + magnet_arm_z + roll_dumbbell + pitch_dumbbell + yaw_dumbbell, method="gbm", data=newTraining, verbose=FALSE)
+tm <- proc.time() - ptm
+tm
+
+ptm <- proc.time()
+modFitA2 <- train(classe ~ user_name + pitch_arm + yaw_arm + roll_arm + roll_belt + pitch_belt + yaw_belt + gyros_belt_x + gyros_belt_y + gyros_belt_z + accel_belt_x + accel_belt_y + accel_belt_z + magnet_belt_x + magnet_belt_y + magnet_belt_z + gyros_arm_x + gyros_arm_y + gyros_arm_z + accel_arm_x + accel_arm_y + accel_arm_z + magnet_arm_x + magnet_arm_y + magnet_arm_z + roll_dumbbell + pitch_dumbbell + yaw_dumbbell, method="gbm", data=newTesting, verbose=FALSE)
+tm <- proc.time() - ptm
+tm
+```
+ 
+```{r, classify observations and modFitA1}
+summary(modFitA1)
+predictTraining <- predict(modFitA1, newTraining)
+table(predictTraining, newTraining$classe)
+```
+The model correctly classifies 93.6% of the observations in the training data with 150 trees.  The *roll_belt* and *yaw_belt* features were by far the most important  
+```{r, summary modFitA2}
+summary(modFitA2,n.trees=150)
+```
+
+A plot of these top two features colored by outcome demonstrates their relative importance.  
+```{r, plot belt}
+qplot(roll_belt, yaw_belt,colour=classe,data=newTraining)
+```
+
+
+Although these are the top observations, however, not great predictors.  Obviously, some bunching can be seen in this
+plot. The choice of a boosting algorithm is a good choice given the large number of weak predictors. The next plot shows the improved performance using boosting iterations.
+
+```{r, plot modFit}
+ggplot(modFitA1)
+```
+
+Next, I check the performance on the 10 percent subsample to get an estimate of the algorithm's out-of-sample performance.
+```{r, predict}
+predictTesting <- predict(modFitA2, newTesting) #newTesting chaged to testing
+table(predictTesting, newTesting$classe)
+```
+The algorithm actually peforms only does slightly worse on the testing subset than it did on the full training set, correctly classifying 93.4 percent of the observations.
+
+#### Prediction Phase
+Finally, predict using the original testing set. The results go to the `pml_write_files()` function and stored.  
+
+```{r, pml.testing}
+pml.testing <- read.csv("K:/COURSES/JHU_DataScience/PracticalMachineLearning/project/data/pml-testing.csv")
+answers <- as.character(predict(modFitA1, pml.testing))
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+The algorithm correctly predicted the outcome for 20/20 observations, in agreement with its strong out-of-sample classification accuracy.  
