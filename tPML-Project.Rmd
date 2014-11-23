@@ -19,27 +19,27 @@ The motivation for the project is to predict how the exercises are performed. Qu
 4. why these choices
 
 #### Data
-The data for this assignment is from [this location](http://groupware.les.inf.puc-rio.br/har), and contains information from the placement accelerometers. The data is split into a training and testing groups.
+The data for this assignment is from [this location](http://groupware.les.inf.puc-rio.br/har), and contains information from the placement accelerometers. The data will be split into a training and testing groups.
 
 #### Method
 
-Set the libraries and read the training test file. Split input training data into training and testing at 90%
+Set the libraries and read the training test file. Split input training data into training and testing
 
-```{r, set libraries}
+```{r, echo=FALSE}
 library(lattice)
 library(ggplot2) 
 library(caret)
 library(gbm)
 ```
 
-```{r, read files and split}
+```{r, read files and split, echo=FALSE}
 set.seed(9175)
 fileLocation = "K:/COURSES/JHU_DataScience/PracticalMachineLearning/project/data/pml-training.csv"
 pml.training <- read.csv(fileLocation)
 ```
 
 Load data to memory
-```{r}
+```{r, echo=FALSE}
 training <- read.csv(fileLocation, na.strings=c("NA","#DIV/0!",""))
 testing <- read.csv(fileLocation, na.strings=c("NA","#DIV/0!",""))
 ```
@@ -53,8 +53,7 @@ newTesting <- pml.training[-inTrain,]
 
 #### Cleaning the data
 
-Clean the data of NAs
-The following process was used to clean the data:
+Clean the data of NAs with the following process:
 
 Mod 1: Cleaning NearZeroVariance Variables
 
@@ -70,7 +69,7 @@ myDataNZV <- nearZeroVar(newTraining, saveMetrics=TRUE)
 
 Run this code to create another training subset without NZV
 
-```{r}
+```{r, echo=FALSE}
 myNZVvars <- names(newTraining) %in% c("new_window", "kurtosis_roll_belt", "kurtosis_picth_belt",
 "kurtosis_yaw_belt", "skewness_roll_belt", "skewness_roll_belt.1", "skewness_yaw_belt",
 "max_yaw_belt", "min_yaw_belt", "amplitude_yaw_belt", "avg_roll_arm", "stddev_roll_arm",
@@ -102,7 +101,7 @@ Mod 3: Cleaning variables of too many NAs.
 For Variables that have >60% threshold of NA's
 
 
-```{r}
+```{r, echo=FALSE}
 
 trainingMx <- newTraining                       #make another subset to iterate over
 for(i in 1:length(newTraining)) 
@@ -145,7 +144,7 @@ dim(testing)
 
 To ensure proper functioning of Decision Trees and RandomForest Algorithm with the test data (original data provided), we need to force to the same type.
 
-```{r}
+```{r, echo=FALSE}
 for (i in 1:length(newTesting)) 
 {
     for(j in 1:length(newTraining)) 
@@ -156,37 +155,46 @@ for (i in 1:length(newTesting))
 		}      
 	}      
 }
-#make sure coertion really worked
+#test coertion really worked
 testing <- rbind(newTraining[2, -58], testing) #row 1,2 are useless and were be removed
 testing <- testing[-1,]
 ```
 
 ```{r, print and save summary}
+#show names, summary of training, write the summary to a file
 names(newTraining)
 smt <- summary(newTraining)
 write.table(smt, file="K:/COURSES/JHU_DataScience/PracticalMachineLearning/project/data/summary.txt", sep=',')
 ```
 
 Reasons for process:
-1. 90 percent subsample is used to train the module
+1. 90 percent subsample is used to train the module.
 2. 10 percent sample is used for cross-validation.  
-3. used this simple cross-validation rather than using K-fold with the `cv.folds` option
-   to decrease run time, which was already rather long  
-4. implement a Stochastic Gradient Boosting algorithm via the `gbm` package.
+3. used this simple cross-validation rather than using K-fold with the *cv.folds* option.
+   to decrease run time, which was already rather long.  
+4. implement a Stochastic Gradient Boosting algorithm via the *gbm* package.
 
 ```{r, fit training and time it}
 ptm <- proc.time()
 modFitA1 <- train(classe ~ user_name + pitch_arm + yaw_arm + roll_arm + roll_belt + pitch_belt + yaw_belt + gyros_belt_x + gyros_belt_y + gyros_belt_z + accel_belt_x + accel_belt_y + accel_belt_z + magnet_belt_x + magnet_belt_y + magnet_belt_z + gyros_arm_x + gyros_arm_y + gyros_arm_z + accel_arm_x + accel_arm_y + accel_arm_z + magnet_arm_x + magnet_arm_y + magnet_arm_z + roll_dumbbell + pitch_dumbbell + yaw_dumbbell, method="gbm", data=newTraining, verbose=FALSE)
+```
+training time
+```{r}
 tm <- proc.time() - ptm
 tm
-
+```
+```{r}
 ptm <- proc.time()
 modFitA2 <- train(classe ~ user_name + pitch_arm + yaw_arm + roll_arm + roll_belt + pitch_belt + yaw_belt + gyros_belt_x + gyros_belt_y + gyros_belt_z + accel_belt_x + accel_belt_y + accel_belt_z + magnet_belt_x + magnet_belt_y + magnet_belt_z + gyros_arm_x + gyros_arm_y + gyros_arm_z + accel_arm_x + accel_arm_y + accel_arm_z + magnet_arm_x + magnet_arm_y + magnet_arm_z + roll_dumbbell + pitch_dumbbell + yaw_dumbbell, method="gbm", data=newTesting, verbose=FALSE)
+```
+testing time
+```{r}
 tm <- proc.time() - ptm
 tm
 ```
  
 ```{r, classify observations and modFitA1}
+#predict training
 summary(modFitA1)
 predictTraining <- predict(modFitA1, newTraining)
 table(predictTraining, newTraining$classe)
@@ -211,10 +219,10 @@ ggplot(modFitA1)
 
 Next, I check the performance on the 10 percent subsample to get an estimate of the algorithm's out-of-sample performance.
 ```{r, predict}
-predictTesting <- predict(modFitA2, newTesting) #newTesting chaged to testing
+predictTesting <- predict(modFitA2, newTesting) #predict newTesting chaged to testing
 table(predictTesting, newTesting$classe)
 ```
-The algorithm actually peforms only does slightly worse on the testing subset than it did on the full training set, correctly classifying 93.4 percent of the observations.
+The algorithm actually peforms slightly worse on the testing subset than it did on the full training set, correctly classifying 93.4 percent of the observations.
 
 #### Prediction Phase
 Finally, predict using the original testing set. The results go to the `pml_write_files()` function and stored.  
